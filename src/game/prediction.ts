@@ -25,6 +25,7 @@ export interface PredictionSegment {
   end: Vec2;
   isCuePath: boolean;
   isSolid: boolean;
+  points: Vec2[];
 }
 
 export interface PredictionResult {
@@ -33,6 +34,8 @@ export interface PredictionResult {
   targetBallPath: { start: Vec2; end: Vec2 } | null;
   willPocket: number[];
 }
+
+const POINT_INTERVAL = 3;
 
 export function predictShot(
   balls: Ball[],
@@ -67,6 +70,25 @@ export function predictShot(
   let firstHitId: number | null = null;
   let targetBallPath: { start: Vec2; end: Vec2 } | null = null;
   let bounces = 0;
+  let currentPoints: Vec2[] = [{ ...currentPos }];
+  let currentIsSolid = true;
+  let stepInSegment = 0;
+
+  const flushSegment = (endPos: Vec2, isSolid: boolean, isCuePath: boolean) => {
+    if (currentPoints.length >= 2) {
+      const pts = [...currentPoints, { ...endPos }];
+      segments.push({
+        start: { ...currentPoints[0] },
+        end: { ...endPos },
+        isCuePath,
+        isSolid,
+        points: pts,
+      });
+    }
+    currentPoints = [{ ...endPos }];
+    currentIsSolid = isSolid;
+    stepInSegment = 0;
+  };
 
   for (let step = 0; step < maxSteps; step++) {
     if (v.len(simCue.spin) > SPIN_DEAD_ZONE) {
@@ -82,6 +104,11 @@ export function predictShot(
       x: currentPos.x + simCue.vel.x,
       y: currentPos.y + simCue.vel.y,
     };
+
+    stepInSegment++;
+    if (stepInSegment % POINT_INTERVAL === 0) {
+      currentPoints.push({ ...nextPos });
+    }
 
     let hitBall: Ball | null = null;
     let minDist = Infinity;
@@ -100,7 +127,7 @@ export function predictShot(
     }
 
     if (hitBall) {
-      segments.push({ start: { ...currentPos }, end: { ...nextPos }, isCuePath: true, isSolid: true });
+      flushSegment(nextPos, currentIsSolid, true);
 
       if (firstHitId === null) {
         firstHitId = hitBall.id;
@@ -139,7 +166,13 @@ export function predictShot(
         }
 
         targetBallPath = { start: targetStart, end: targetEnd };
-        segments.push({ start: targetStart, end: targetEnd, isCuePath: false, isSolid: false });
+        segments.push({
+          start: targetStart,
+          end: targetEnd,
+          isCuePath: false,
+          isSolid: false,
+          points: [targetStart, targetEnd],
+        });
 
         const spinDeflection = tangent;
         const cueReflectBase = v.sub(simCue.vel, v.mul(normal, v.dot(simCue.vel, normal) * (1 + RESTITUTION_BALL) * 0.5));
@@ -196,7 +229,7 @@ export function predictShot(
 
     if (wallHit) {
       bounces++;
-      segments.push({ start: { ...currentPos }, end: { ...nextPos }, isCuePath: true, isSolid: false });
+      flushSegment(nextPos, false, true);
       if (bounces >= maxBounces) break;
       currentPos = { ...nextPos };
       simCue.vel.x *= Math.pow(FRICTION, 2);
@@ -207,7 +240,7 @@ export function predictShot(
     let pocketed = false;
     for (const pocket of POCKETS) {
       if (v.dist(nextPos, pocket.pos) < pocket.radius - BALL_RADIUS * 0.2) {
-        segments.push({ start: { ...currentPos }, end: { ...nextPos }, isCuePath: true, isSolid: false });
+        flushSegment(nextPos, false, true);
         willPocket.push(0);
         pocketed = true;
         break;
@@ -224,12 +257,20 @@ export function predictShot(
     }
   }
 
-  if (segments.length === 0 && (Math.abs(simCue.vel.x) > 0.01 || Math.abs(simCue.vel.y) > 0.01)) {
-    const endPos = {
-      x: currentPos.x + simCue.vel.x * 30,
-      y: currentPos.y + simCue.vel.y * 30,
-    };
-    segments.push({ start: { ...cueBall.pos }, end: endPos, isCuePath: true, isSolid: false });
+  if (currentPoints.length >= 1) {
+    const lastPt = currentPoints[currentPoints.length - 1];
+    if (v.dist(lastPt, currentPos) > 1) {
+      currentPoints.push({ ...currentPos });
+    }
+    if (currentPoints.length >= 2) {
+      segments.push({
+        start: { ...currentPoints[0] },
+        end: { ...currentPos },
+        isCuePath: true,
+        isSolid: segments.length === 0,
+        points: [...currentPoints],
+      });
+    }
   }
 
   if (segments.length > 0) {

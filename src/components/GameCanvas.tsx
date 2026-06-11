@@ -149,6 +149,7 @@ export default function GameCanvas() {
         if (!curPlayer?.isAI) {
           chargeStartMouseRef.current = pt;
           startCharge();
+          isChargingRef.current = true;
         }
       }
     };
@@ -183,9 +184,10 @@ export default function GameCanvas() {
     drawTable(ctx, t);
 
     if (showAimLine && (curPhase === 'aiming' || curPhase === 'charging') && !freeBall) {
+      const cue = curBalls.find((bb) => bb.id === 0);
       const activePower = curPower > 0 ? curPower : 0.5;
       const prediction = predictShot(curBalls, aimAngle, activePower, 1, 120, curSpinX);
-      drawAimLine(ctx, curBalls, prediction);
+      if (cue) drawAimLine(ctx, cue.pos, prediction);
     }
 
     if (freeBall) {
