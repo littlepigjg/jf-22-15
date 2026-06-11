@@ -18,20 +18,15 @@ export default function GameCanvas() {
   const chargeStartMouseRef = useRef({ x: 0, y: 0 });
   const animRef = useRef({ cueShrink: 0 });
   const isChargingRef = useRef(false);
+  const lockedAngleRef = useRef<number | null>(null);
 
-  const phase = useGameStore((s) => s.phase);
-  const balls = useGameStore((s) => s.balls);
-  const table = useGameStore((s) => s.table);
-  const aimAngle = useGameStore((s) => s.aimAngle);
-  const power = useGameStore((s) => s.power);
-  const spinX = useGameStore((s) => s.spinX);
-  const isCharging = useGameStore((s) => s.isCharging);
   const showAimLine = useGameStore((s) => s.showAimLine);
   const freeBall = useGameStore((s) => s.freeBall);
-  const foulMessage = useGameStore((s) => s.foulMessage);
-  const winner = useGameStore((s) => s.winner);
   const currentPlayerId = useGameStore((s) => s.currentPlayerId);
   const players = useGameStore((s) => s.players);
+  const table = useGameStore((s) => s.table);
+  const foulMessage = useGameStore((s) => s.foulMessage);
+  const winner = useGameStore((s) => s.winner);
 
   const setAimAngle = useGameStore((s) => s.setAimAngle);
   const setSpinX = useGameStore((s) => s.setSpinX);
@@ -44,10 +39,6 @@ export default function GameCanvas() {
   const placeFreeBall = useGameStore((s) => s.placeFreeBall);
 
   useEffect(() => {
-    isChargingRef.current = isCharging;
-  }, [isCharging]);
-
-  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
@@ -58,10 +49,12 @@ export default function GameCanvas() {
       const dt = Math.min(0.05, (time - lastTimeRef.current) / 1000);
       lastTimeRef.current = time;
 
-      const curPhase = useGameStore.getState().phase;
-      const curBalls = useGameStore.getState().balls;
-      const curPower = useGameStore.getState().power;
-      const curSpinX = useGameStore.getState().spinX;
+      const state = useGameStore.getState();
+      const curPhase = state.phase;
+      const curBalls = state.balls;
+      const curPower = state.power;
+      const curSpinX = state.spinX;
+      const curAimAngle = state.aimAngle;
 
       if (curPhase === 'charging') {
         updateCharge(dt);
@@ -78,22 +71,22 @@ export default function GameCanvas() {
         resolveTurn();
       }
 
-      if (curPhase === 'aiming' && !freeBall) {
-        const curPlayer = players.find((p) => p.id === currentPlayerId);
+      if (curPhase === 'aiming' && !state.freeBall) {
+        const curPlayer = state.players.find((p) => p.id === state.currentPlayerId);
         if (curPlayer?.isAI && time - lastAITime > 800) {
           lastAITime = time;
           aiTakeTurn();
         }
       }
 
-      draw(ctx, curBalls, table, curPhase, curPower, curSpinX);
+      draw(ctx, curBalls, table, curPhase, curPower, curSpinX, curAimAngle, state.freeBall, state.foulMessage, state.winner, state.currentPlayerId, state.players);
 
       rafRef.current = requestAnimationFrame(loop);
     };
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [freeBall, currentPlayerId, players, updateCharge, simulateStep, resolveTurn, aiTakeTurn, table]);
+  }, [table, updateCharge, simulateStep, resolveTurn, aiTakeTurn]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -113,7 +106,12 @@ export default function GameCanvas() {
       const pt = toLocal(e);
       mouseRef.current = pt;
 
-      if (isChargingRef.current) {
+      const state = useGameStore.getState();
+
+      if (state.phase === 'charging') {
+        if (lockedAngleRef.current !== null && state.aimAngle !== lockedAngleRef.current) {
+          setAimAngle(lockedAngleRef.current);
+        }
         const startX = chargeStartMouseRef.current.x;
         const dx = pt.x - startX;
         const spin = Math.max(-1, Math.min(1, dx / 150));
@@ -121,32 +119,36 @@ export default function GameCanvas() {
         return;
       }
 
-      const curBalls = useGameStore.getState().balls;
-      const curFreeBall = useGameStore.getState().freeBall;
-      const cue = curBalls.find((b) => b.id === 0);
-      if (cue && !curFreeBall) {
-        const dx = pt.x - cue.pos.x;
-        const dy = pt.y - cue.pos.y;
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-          setAimAngle(Math.atan2(dy, dx));
+      if (state.phase === 'aiming' && !state.freeBall) {
+        const cue = state.balls.find((b) => b.id === 0);
+        if (cue) {
+          const dx = pt.x - cue.pos.x;
+          const dy = pt.y - cue.pos.y;
+          if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+            const rawAngle = Math.atan2(dy, dx);
+            const curAngle = state.aimAngle;
+            let diff = rawAngle - curAngle;
+            while (diff > Math.PI) diff -= 2 * Math.PI;
+            while (diff < -Math.PI) diff += 2 * Math.PI;
+            const smoothed = curAngle + diff * 0.4;
+            setAimAngle(smoothed);
+          }
         }
       }
     };
 
     const onDown = (e: MouseEvent) => {
       const pt = toLocal(e);
-      const curFreeBall = useGameStore.getState().freeBall;
-      const curPhase = useGameStore.getState().phase;
-      const curPlayers = useGameStore.getState().players;
-      const curPlayerId = useGameStore.getState().currentPlayerId;
+      const state = useGameStore.getState();
 
-      if (curFreeBall) {
+      if (state.freeBall) {
         placeFreeBall(pt.x, pt.y);
         return;
       }
-      if (curPhase === 'aiming') {
-        const curPlayer = curPlayers.find((p) => p.id === curPlayerId);
+      if (state.phase === 'aiming') {
+        const curPlayer = state.players.find((p) => p.id === state.currentPlayerId);
         if (!curPlayer?.isAI) {
+          lockedAngleRef.current = state.aimAngle;
           chargeStartMouseRef.current = pt;
           startCharge();
           isChargingRef.current = true;
@@ -157,6 +159,8 @@ export default function GameCanvas() {
     const onUp = () => {
       if (isChargingRef.current) {
         releaseShot();
+        isChargingRef.current = false;
+        lockedAngleRef.current = null;
       }
     };
 
@@ -177,20 +181,26 @@ export default function GameCanvas() {
     curPhase: string,
     curPower: number,
     curSpinX: number,
+    curAimAngle: number,
+    curFreeBall: boolean,
+    curFoulMessage: string | null,
+    curWinner: { name: string } | null,
+    curCurrentPlayerId: number,
+    curPlayers: { id: number; name: string; isAI: boolean }[],
   ) => {
     ctx.fillStyle = '#0a0f0a';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
     drawTable(ctx, t);
 
-    if (showAimLine && (curPhase === 'aiming' || curPhase === 'charging') && !freeBall) {
+    if (showAimLine && (curPhase === 'aiming' || curPhase === 'charging') && !curFreeBall) {
       const cue = curBalls.find((bb) => bb.id === 0);
       const activePower = curPower > 0 ? curPower : 0.5;
-      const prediction = predictShot(curBalls, aimAngle, activePower, 1, 120, curSpinX);
+      const prediction = predictShot(curBalls, curAimAngle, activePower, 1, 120, curSpinX);
       if (cue) drawAimLine(ctx, cue.pos, prediction);
     }
 
-    if (freeBall) {
+    if (curFreeBall) {
       drawFreeBallHint(ctx);
     }
 
@@ -198,20 +208,20 @@ export default function GameCanvas() {
       if (!b.pocketed) drawBall(ctx, b);
     }
 
-    if ((curPhase === 'aiming' || curPhase === 'charging') && !freeBall) {
+    if ((curPhase === 'aiming' || curPhase === 'charging') && !curFreeBall) {
       const cue = curBalls.find((bb) => bb.id === 0);
-      const curPlayer = players.find((p) => p.id === currentPlayerId);
+      const curPlayer = curPlayers.find((p) => p.id === curCurrentPlayerId);
       if (cue && !curPlayer?.isAI) {
-        drawCue(ctx, cue, aimAngle, curPower, animRef.current.cueShrink, curSpinX);
+        drawCue(ctx, cue, curAimAngle, curPower, animRef.current.cueShrink, curSpinX);
       }
     }
 
-    if (foulMessage && curPhase !== 'gameover') {
-      drawFoulBanner(ctx, foulMessage);
+    if (curFoulMessage && curPhase !== 'gameover') {
+      drawFoulBanner(ctx, curFoulMessage);
     }
 
-    if (winner) {
-      drawWinnerBanner(ctx, winner.name);
+    if (curWinner) {
+      drawWinnerBanner(ctx, curWinner.name);
     }
   };
 

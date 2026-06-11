@@ -361,3 +361,94 @@ describe('旋转物理 - 综合场景', () => {
     expect(targetMoved).toBe(true);
   });
 });
+
+describe('预测与实际物理一致性', () => {
+  const STEPS = 30;
+  const POINT_INTERVAL = 3;
+
+  function runActualAndPredict(
+    ballSetup: () => Ball[],
+    cueAngle: number,
+    cuePower: number,
+    spinX: number,
+  ) {
+    const actualBalls = ballSetup();
+    applyShot(actualBalls, cueAngle, cuePower, MAX_POWER, spinX, 0);
+    const actualPos: { x: number; y: number }[] = [];
+    for (let i = 0; i < STEPS; i++) {
+      stepPhysics(actualBalls, 1 / 60);
+      actualPos.push({ x: actualBalls[0].pos.x, y: actualBalls[0].pos.y });
+    }
+
+    const predBalls = ballSetup();
+    const prediction = predictShot(predBalls, cueAngle, cuePower, 1, STEPS + 10, spinX);
+
+    const firstSeg = prediction.segments.find((s) => s.isCuePath);
+    const targetStepIdx = Math.floor(STEPS / POINT_INTERVAL);
+    let predPoint: { x: number; y: number } | null = null;
+    if (firstSeg && targetStepIdx < firstSeg.points.length) {
+      predPoint = firstSeg.points[targetStepIdx];
+    } else if (firstSeg && firstSeg.points.length >= 2) {
+      predPoint = firstSeg.points[firstSeg.points.length - 1];
+    }
+
+    return { actualPos, predPoint, prediction };
+  }
+
+  it('无旋转时，预测轨迹与实际轨迹吻合', () => {
+    const createBalls = () => [
+      makeBall(0, TABLE_X + 200, TABLE_Y + TABLE_HEIGHT / 2),
+      makeBall(1, TABLE_X + 200 + BALL_RADIUS * 4, TABLE_Y + TABLE_HEIGHT / 2),
+    ];
+
+    const { actualPos, predPoint } = runActualAndPredict(createBalls, 0, 0.3, 0);
+
+    if (predPoint) {
+      const actualEnd = actualPos[actualPos.length - 1];
+      const dist = Math.sqrt((predPoint.x - actualEnd.x) ** 2 + (predPoint.y - actualEnd.y) ** 2);
+      expect(dist).toBeLessThan(8);
+    }
+  });
+
+  it('有旋转时，预测轨迹与实际轨迹吻合', () => {
+    const createBalls = () => [
+      makeBall(0, TABLE_X + 200, TABLE_Y + TABLE_HEIGHT / 2),
+    ];
+
+    const { actualPos, predPoint } = runActualAndPredict(createBalls, 0, 0.3, 0.6);
+
+    if (predPoint) {
+      const actualEnd = actualPos[actualPos.length - 1];
+      const dist = Math.sqrt((predPoint.x - actualEnd.x) ** 2 + (predPoint.y - actualEnd.y) ** 2);
+      expect(dist).toBeLessThan(8);
+    }
+  });
+
+  it('碰撞后预测的偏转方向与实际一致', () => {
+    const createBalls = () => [
+      makeBall(0, TABLE_X + 200, TABLE_Y + TABLE_HEIGHT / 2),
+      makeBall(1, TABLE_X + 200 + BALL_RADIUS * 4, TABLE_Y + TABLE_HEIGHT / 2),
+    ];
+
+    const actualBalls = createBalls();
+    applyShot(actualBalls, 0, 0.5, MAX_POWER, 0.8, 0);
+
+    for (let i = 0; i < 120; i++) {
+      stepPhysics(actualBalls, 1 / 60);
+    }
+    const actualCueEnd = { x: actualBalls[0].pos.x, y: actualBalls[0].pos.y };
+
+    const predBalls = createBalls();
+    const prediction = predictShot(predBalls, 0, 0.5, 1, 120, 0.8);
+
+    const cueSegs = prediction.segments.filter((s) => s.isCuePath);
+    if (cueSegs.length >= 2) {
+      const lastSeg = cueSegs[cueSegs.length - 1];
+      const predEnd = lastSeg.points[lastSeg.points.length - 1];
+      const dy = Math.abs(predEnd.y - actualCueEnd.y);
+      const dx = Math.abs(predEnd.x - actualCueEnd.x);
+      expect(dy).toBeLessThan(20);
+      expect(dx).toBeLessThan(20);
+    }
+  });
+});

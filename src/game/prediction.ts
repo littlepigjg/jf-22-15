@@ -6,18 +6,9 @@ import {
   PLAYFIELD_TOP,
   PLAYFIELD_BOTTOM,
   POCKETS,
-  FRICTION,
-  RESTITUTION_BALL,
-  RESTITUTION_WALL,
-  SPIN_CURVE_STRENGTH,
-  SPIN_TRANSFER_COLLISION,
-  SPIN_DECAY_COLLISION,
-  SPIN_TRANSFER_WALL,
-  SPIN_DECAY_WALL,
-  SPIN_APPLY_MULTIPLIER,
-  SPIN_DEAD_ZONE,
   MAX_POWER,
 } from './constants';
+import { applyShot, stepPhysics } from './physics';
 import { v } from '../utils/math';
 
 export interface PredictionSegment {
@@ -59,13 +50,9 @@ export function predictShot(
     pocketed: b.pocketed,
   }));
 
-  const simCue = simBalls.find((b) => b.id === 0)!;
-  const speed = cuePower * 15;
-  simCue.vel.x = Math.cos(cueAngle) * speed;
-  simCue.vel.y = Math.sin(cueAngle) * speed;
-  simCue.spin.x = spinX * MAX_POWER * SPIN_APPLY_MULTIPLIER;
-  simCue.spin.y = 0;
+  applyShot(simBalls, cueAngle, cuePower, MAX_POWER, spinX, 0);
 
+  const simCue = simBalls.find((b) => b.id === 0)!;
   let currentPos = { ...simCue.pos };
   let firstHitId: number | null = null;
   let targetBallPath: { start: Vec2; end: Vec2 } | null = null;
@@ -91,181 +78,104 @@ export function predictShot(
   };
 
   for (let step = 0; step < maxSteps; step++) {
-    if (v.len(simCue.spin) > SPIN_DEAD_ZONE) {
-      const dir = v.norm(simCue.vel);
-      const perpX = -dir.y;
-      const perpY = dir.x;
-      simCue.vel.x += perpX * simCue.spin.x * SPIN_CURVE_STRENGTH;
-      simCue.vel.y += perpY * simCue.spin.x * SPIN_CURVE_STRENGTH;
-      simCue.spin.x *= 0.99;
-    }
-
-    const nextPos = {
-      x: currentPos.x + simCue.vel.x,
-      y: currentPos.y + simCue.vel.y,
-    };
+    const result = stepPhysics(simBalls, 1 / 60);
 
     stepInSegment++;
     if (stepInSegment % POINT_INTERVAL === 0) {
-      currentPoints.push({ ...nextPos });
+      currentPoints.push({ ...simCue.pos });
     }
 
-    let hitBall: Ball | null = null;
-    let minDist = Infinity;
+    const cueCollisions = result.ballCollisions.filter(
+      (c) => c.a === 0 || c.b === 0,
+    );
 
-    for (const other of simBalls) {
-      if (other.id === 0 || other.pocketed) continue;
-
-      const dx = nextPos.x - other.pos.x;
-      const dy = nextPos.y - other.pos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < BALL_RADIUS * 2 - 1 && dist < minDist) {
-        minDist = dist;
-        hitBall = other;
-      }
-    }
-
-    if (hitBall) {
-      flushSegment(nextPos, currentIsSolid, true);
+    if (cueCollisions.length > 0) {
+      flushSegment({ ...simCue.pos }, currentIsSolid, true);
 
       if (firstHitId === null) {
-        firstHitId = hitBall.id;
+        const hit = cueCollisions[0];
+        const hitBallId = hit.a === 0 ? hit.b : hit.a;
+        firstHitId = hitBallId;
 
-        const normal = v.norm(v.sub(nextPos, hitBall.pos));
-        const tangent = { x: -normal.y, y: normal.x };
-        const speedAlongNormal = v.dot(simCue.vel, normal);
+        const hitBall = simBalls.find((b) => b.id === hitBallId);
+        if (hitBall) {
+          const targetStart = { ...hitBall.pos };
+          const targetEnd = { x: targetStart.x, y: targetStart.y };
+          let tv = { ...hitBall.vel };
 
-        let cueSpinEffect = 0;
-        if (Math.abs(simCue.spin.x) > SPIN_DEAD_ZONE) {
-          cueSpinEffect = simCue.spin.x * SPIN_TRANSFER_COLLISION;
-        }
+          for (let t = 0; t < 80; t++) {
+            targetEnd.x += tv.x;
+            targetEnd.y += tv.y;
+            tv.x *= 0.988;
+            tv.y *= 0.988;
 
-        const targetVel = v.mul(normal, speedAlongNormal * 0.9);
-        const targetStart = { ...hitBall.pos };
-        const targetEnd = { x: targetStart.x, y: targetStart.y };
-        let tv = { ...targetVel };
-
-        for (let t = 0; t < 80; t++) {
-          targetEnd.x += tv.x;
-          targetEnd.y += tv.y;
-          tv.x *= Math.pow(FRICTION, 1);
-          tv.y *= Math.pow(FRICTION, 1);
-
-          if (targetEnd.x - BALL_RADIUS < PLAYFIELD_LEFT || targetEnd.x + BALL_RADIUS > PLAYFIELD_RIGHT ||
-              targetEnd.y - BALL_RADIUS < PLAYFIELD_TOP || targetEnd.y + BALL_RADIUS > PLAYFIELD_BOTTOM) {
-            break;
-          }
-
-          for (const pocket of POCKETS) {
-            if (v.dist(targetEnd, pocket.pos) < pocket.radius - BALL_RADIUS * 0.4) {
-              willPocket.push(hitBall!.id);
+            if (targetEnd.x - BALL_RADIUS < PLAYFIELD_LEFT || targetEnd.x + BALL_RADIUS > PLAYFIELD_RIGHT ||
+                targetEnd.y - BALL_RADIUS < PLAYFIELD_TOP || targetEnd.y + BALL_RADIUS > PLAYFIELD_BOTTOM) {
               break;
             }
+
+            for (const pocket of POCKETS) {
+              if (v.dist(targetEnd, pocket.pos) < pocket.radius - BALL_RADIUS * 0.4) {
+                willPocket.push(hitBallId);
+                break;
+              }
+            }
           }
-        }
 
-        targetBallPath = { start: targetStart, end: targetEnd };
-        segments.push({
-          start: targetStart,
-          end: targetEnd,
-          isCuePath: false,
-          isSolid: false,
-          points: [targetStart, targetEnd],
-        });
-
-        const spinDeflection = tangent;
-        const cueReflectBase = v.sub(simCue.vel, v.mul(normal, v.dot(simCue.vel, normal) * (1 + RESTITUTION_BALL) * 0.5));
-        if (Math.abs(cueSpinEffect) > SPIN_DEAD_ZONE) {
-          cueReflectBase.x += spinDeflection.x * cueSpinEffect;
-          cueReflectBase.y += spinDeflection.y * cueSpinEffect;
-          simCue.spin.x *= SPIN_DECAY_COLLISION;
+          targetBallPath = { start: targetStart, end: targetEnd };
+          segments.push({
+            start: targetStart,
+            end: targetEnd,
+            isCuePath: false,
+            isSolid: false,
+            points: [targetStart, targetEnd],
+          });
         }
-        simCue.vel = cueReflectBase;
-      } else {
-        const normal = v.norm(v.sub(nextPos, hitBall.pos));
-        simCue.vel = v.sub(simCue.vel, v.mul(normal, v.dot(simCue.vel, normal) * (1 + RESTITUTION_BALL) * 0.5));
       }
 
-      currentPos = { ...nextPos };
+      currentPos = { ...simCue.pos };
       continue;
     }
 
-    let wallHit = false;
-    if (nextPos.x - BALL_RADIUS < PLAYFIELD_LEFT) {
-      simCue.vel.x = -simCue.vel.x * RESTITUTION_WALL;
-      nextPos.x = PLAYFIELD_LEFT + BALL_RADIUS;
-      if (Math.abs(simCue.spin.x) > SPIN_DEAD_ZONE) {
-        simCue.vel.y += simCue.spin.x * SPIN_TRANSFER_WALL;
-        simCue.spin.x *= SPIN_DECAY_WALL;
-      }
-      wallHit = true;
-    } else if (nextPos.x + BALL_RADIUS > PLAYFIELD_RIGHT) {
-      simCue.vel.x = -simCue.vel.x * RESTITUTION_WALL;
-      nextPos.x = PLAYFIELD_RIGHT - BALL_RADIUS;
-      if (Math.abs(simCue.spin.x) > SPIN_DEAD_ZONE) {
-        simCue.vel.y -= simCue.spin.x * SPIN_TRANSFER_WALL;
-        simCue.spin.x *= SPIN_DECAY_WALL;
-      }
-      wallHit = true;
-    }
-    if (nextPos.y - BALL_RADIUS < PLAYFIELD_TOP) {
-      simCue.vel.y = -simCue.vel.y * RESTITUTION_WALL;
-      nextPos.y = PLAYFIELD_TOP + BALL_RADIUS;
-      if (Math.abs(simCue.spin.x) > SPIN_DEAD_ZONE) {
-        simCue.vel.x += simCue.spin.x * SPIN_TRANSFER_WALL;
-        simCue.spin.x *= SPIN_DECAY_WALL;
-      }
-      wallHit = true;
-    } else if (nextPos.y + BALL_RADIUS > PLAYFIELD_BOTTOM) {
-      simCue.vel.y = -simCue.vel.y * RESTITUTION_WALL;
-      nextPos.y = PLAYFIELD_BOTTOM - BALL_RADIUS;
-      if (Math.abs(simCue.spin.x) > SPIN_DEAD_ZONE) {
-        simCue.vel.x -= simCue.spin.x * SPIN_TRANSFER_WALL;
-        simCue.spin.x *= SPIN_DECAY_WALL;
-      }
-      wallHit = true;
-    }
-
-    if (wallHit) {
+    const cueWallHit = result.wallCollisions.some((c) => c.ballId === 0);
+    if (cueWallHit) {
       bounces++;
-      flushSegment(nextPos, false, true);
+      flushSegment({ ...simCue.pos }, false, true);
       if (bounces >= maxBounces) break;
-      currentPos = { ...nextPos };
-      simCue.vel.x *= Math.pow(FRICTION, 2);
-      simCue.vel.y *= Math.pow(FRICTION, 2);
+      currentPos = { ...simCue.pos };
       continue;
     }
 
-    let pocketed = false;
-    for (const pocket of POCKETS) {
-      if (v.dist(nextPos, pocket.pos) < pocket.radius - BALL_RADIUS * 0.2) {
-        flushSegment(nextPos, false, true);
-        willPocket.push(0);
-        pocketed = true;
-        break;
+    const cuePocketed = result.pocketedBalls.includes(0);
+    if (cuePocketed) {
+      flushSegment({ ...simCue.pos }, false, true);
+      willPocket.push(0);
+      break;
+    }
+
+    for (const id of result.pocketedBalls) {
+      if (id !== 0 && !willPocket.includes(id)) {
+        willPocket.push(id);
       }
     }
-    if (pocketed) break;
 
-    currentPos = { ...nextPos };
-    simCue.vel.x *= Math.pow(FRICTION, 1);
-    simCue.vel.y *= Math.pow(FRICTION, 1);
+    currentPos = { ...simCue.pos };
 
-    if (Math.abs(simCue.vel.x) < 0.05 && Math.abs(simCue.vel.y) < 0.05) {
+    const speed = Math.sqrt(simCue.vel.x * simCue.vel.x + simCue.vel.y * simCue.vel.y);
+    if (speed < 0.05 && simCue.vel.x === 0 && simCue.vel.y === 0) {
       break;
     }
   }
 
   if (currentPoints.length >= 1) {
     const lastPt = currentPoints[currentPoints.length - 1];
-    if (v.dist(lastPt, currentPos) > 1) {
-      currentPoints.push({ ...currentPos });
+    if (v.dist(lastPt, simCue.pos) > 1) {
+      currentPoints.push({ ...simCue.pos });
     }
     if (currentPoints.length >= 2) {
       segments.push({
         start: { ...currentPoints[0] },
-        end: { ...currentPos },
+        end: { ...simCue.pos },
         isCuePath: true,
         isSolid: segments.length === 0,
         points: [...currentPoints],
