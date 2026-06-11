@@ -10,6 +10,14 @@ import {
   PLAYFIELD_BOTTOM,
   BALL_RADIUS,
   POCKETS,
+  SPIN_CURVE_STRENGTH,
+  SPIN_TRANSFER_COLLISION,
+  SPIN_TRANSFER_WALL,
+  SPIN_DECAY_COLLISION,
+  SPIN_DECAY_WALL,
+  SPIN_APPLY_MULTIPLIER,
+  SPIN_DEAD_ZONE,
+  MAX_POWER,
 } from './constants';
 import type { Ball, HitRecord } from './types';
 import { v } from '../utils/math';
@@ -38,9 +46,12 @@ export function stepPhysics(
     ball.vel.x += ball.acc.x * dt;
     ball.vel.y += ball.acc.y * dt;
 
-    if (v.len(ball.spin) > 0.01) {
-      ball.vel.x += ball.spin.x * 0.008;
-      ball.vel.y += ball.spin.y * 0.008;
+    if (v.len(ball.spin) > SPIN_DEAD_ZONE) {
+      const dir = v.norm(ball.vel);
+      const perpX = -dir.y;
+      const perpY = dir.x;
+      ball.vel.x += perpX * ball.spin.x * SPIN_CURVE_STRENGTH;
+      ball.vel.y += perpY * ball.spin.x * SPIN_CURVE_STRENGTH;
     }
 
     ball.pos.x += ball.vel.x;
@@ -139,14 +150,18 @@ function resolveBallCollision(a: Ball, b: Ball): boolean {
   let frictionImpulse = -relVelTan * 0.08;
 
   const cueBall = a.id === 0 ? a : (b.id === 0 ? b : null);
-  if (cueBall && Math.abs(cueBall.spin.x) > 0.01) {
-    const spinTransfer = cueBall.spin.x * 0.15;
+  if (cueBall && Math.abs(cueBall.spin.x) > SPIN_DEAD_ZONE) {
+    const speed = v.len(cueBall.vel);
+    const spinMagnitude = Math.abs(cueBall.spin.x);
+    const spinRatio = Math.min(1, spinMagnitude / (speed * 0.5 + 1));
+    const spinForce = cueBall.spin.x * SPIN_TRANSFER_COLLISION * (1 + spinRatio * 2);
+
     if (cueBall === a) {
-      frictionImpulse += spinTransfer;
+      frictionImpulse += spinForce;
     } else {
-      frictionImpulse -= spinTransfer;
+      frictionImpulse -= spinForce;
     }
-    cueBall.spin.x *= 0.6;
+    cueBall.spin.x *= SPIN_DECAY_COLLISION;
   }
 
   a.vel.x += tangent.x * frictionImpulse;
@@ -163,36 +178,36 @@ function resolveWallCollision(ball: Ball): boolean {
   if (ball.pos.x - ball.radius < PLAYFIELD_LEFT) {
     ball.pos.x = PLAYFIELD_LEFT + ball.radius;
     ball.vel.x = -ball.vel.x * RESTITUTION_WALL;
-    if (Math.abs(ball.spin.x) > 0.01) {
-      ball.vel.y += ball.spin.x * 0.4;
-      ball.spin.x *= 0.7;
+    if (Math.abs(ball.spin.x) > SPIN_DEAD_ZONE) {
+      ball.vel.y += ball.spin.x * SPIN_TRANSFER_WALL;
+      ball.spin.x *= SPIN_DECAY_WALL;
     }
     collided = true;
   }
   if (ball.pos.x + ball.radius > PLAYFIELD_RIGHT) {
     ball.pos.x = PLAYFIELD_RIGHT - ball.radius;
     ball.vel.x = -ball.vel.x * RESTITUTION_WALL;
-    if (Math.abs(ball.spin.x) > 0.01) {
-      ball.vel.y -= ball.spin.x * 0.4;
-      ball.spin.x *= 0.7;
+    if (Math.abs(ball.spin.x) > SPIN_DEAD_ZONE) {
+      ball.vel.y -= ball.spin.x * SPIN_TRANSFER_WALL;
+      ball.spin.x *= SPIN_DECAY_WALL;
     }
     collided = true;
   }
   if (ball.pos.y - ball.radius < PLAYFIELD_TOP) {
     ball.pos.y = PLAYFIELD_TOP + ball.radius;
     ball.vel.y = -ball.vel.y * RESTITUTION_WALL;
-    if (Math.abs(ball.spin.x) > 0.01) {
-      ball.vel.x += ball.spin.x * 0.4;
-      ball.spin.x *= 0.7;
+    if (Math.abs(ball.spin.x) > SPIN_DEAD_ZONE) {
+      ball.vel.x += ball.spin.x * SPIN_TRANSFER_WALL;
+      ball.spin.x *= SPIN_DECAY_WALL;
     }
     collided = true;
   }
   if (ball.pos.y + ball.radius > PLAYFIELD_BOTTOM) {
     ball.pos.y = PLAYFIELD_BOTTOM - ball.radius;
     ball.vel.y = -ball.vel.y * RESTITUTION_WALL;
-    if (Math.abs(ball.spin.x) > 0.01) {
-      ball.vel.x -= ball.spin.x * 0.4;
-      ball.spin.x *= 0.7;
+    if (Math.abs(ball.spin.x) > SPIN_DEAD_ZONE) {
+      ball.vel.x -= ball.spin.x * SPIN_TRANSFER_WALL;
+      ball.spin.x *= SPIN_DECAY_WALL;
     }
     collided = true;
   }
@@ -222,8 +237,8 @@ export function applyShot(
   const speed = power * maxPower;
   cueBall.vel.x = Math.cos(aimAngle) * speed;
   cueBall.vel.y = Math.sin(aimAngle) * speed;
-  cueBall.spin.x = spinX * maxPower * 2;
-  cueBall.spin.y = spinY * maxPower * 2;
+  cueBall.spin.x = spinX * maxPower * SPIN_APPLY_MULTIPLIER;
+  cueBall.spin.y = spinY * maxPower * SPIN_APPLY_MULTIPLIER;
 }
 
 export function runPhysicsUntilStopped(

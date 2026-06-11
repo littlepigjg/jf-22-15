@@ -21,6 +21,14 @@ export const POCKET_RADIUS = 22;
 export const MAX_POWER = 28;
 export const POWER_ACCELERATION = 1.8;
 
+export const SPIN_CURVE_STRENGTH = 0.025;
+export const SPIN_TRANSFER_COLLISION = 0.35;
+export const SPIN_TRANSFER_WALL = 0.8;
+export const SPIN_DECAY_COLLISION = 0.55;
+export const SPIN_DECAY_WALL = 0.65;
+export const SPIN_APPLY_MULTIPLIER = 3.5;
+export const SPIN_DEAD_ZONE = 0.01;
+
 export const POCKETS: Pocket[] = [
   { pos: { x: TABLE_X, y: TABLE_Y }, radius: POCKET_RADIUS },
   { pos: { x: TABLE_X + TABLE_WIDTH / 2, y: TABLE_Y - 4 }, radius: POCKET_RADIUS - 2 },
