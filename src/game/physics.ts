@@ -39,8 +39,8 @@ export function stepPhysics(
     ball.vel.y += ball.acc.y * dt;
 
     if (v.len(ball.spin) > 0.01) {
-      ball.vel.x += ball.spin.x * 0.002;
-      ball.vel.y += ball.spin.y * 0.002;
+      ball.vel.x += ball.spin.x * 0.008;
+      ball.vel.y += ball.spin.y * 0.008;
     }
 
     ball.pos.x += ball.vel.x;
@@ -135,7 +135,20 @@ function resolveBallCollision(a: Ball, b: Ball): boolean {
 
   const tangent = { x: -normal.y, y: normal.x };
   const relVelTan = v.dot(relVel, tangent);
-  const frictionImpulse = -relVelTan * 0.08;
+
+  let frictionImpulse = -relVelTan * 0.08;
+
+  const cueBall = a.id === 0 ? a : (b.id === 0 ? b : null);
+  if (cueBall && Math.abs(cueBall.spin.x) > 0.01) {
+    const spinTransfer = cueBall.spin.x * 0.15;
+    if (cueBall === a) {
+      frictionImpulse += spinTransfer;
+    } else {
+      frictionImpulse -= spinTransfer;
+    }
+    cueBall.spin.x *= 0.6;
+  }
+
   a.vel.x += tangent.x * frictionImpulse;
   a.vel.y += tangent.y * frictionImpulse;
   b.vel.x -= tangent.x * frictionImpulse;
@@ -150,21 +163,37 @@ function resolveWallCollision(ball: Ball): boolean {
   if (ball.pos.x - ball.radius < PLAYFIELD_LEFT) {
     ball.pos.x = PLAYFIELD_LEFT + ball.radius;
     ball.vel.x = -ball.vel.x * RESTITUTION_WALL;
+    if (Math.abs(ball.spin.x) > 0.01) {
+      ball.vel.y += ball.spin.x * 0.4;
+      ball.spin.x *= 0.7;
+    }
     collided = true;
   }
   if (ball.pos.x + ball.radius > PLAYFIELD_RIGHT) {
     ball.pos.x = PLAYFIELD_RIGHT - ball.radius;
     ball.vel.x = -ball.vel.x * RESTITUTION_WALL;
+    if (Math.abs(ball.spin.x) > 0.01) {
+      ball.vel.y -= ball.spin.x * 0.4;
+      ball.spin.x *= 0.7;
+    }
     collided = true;
   }
   if (ball.pos.y - ball.radius < PLAYFIELD_TOP) {
     ball.pos.y = PLAYFIELD_TOP + ball.radius;
     ball.vel.y = -ball.vel.y * RESTITUTION_WALL;
+    if (Math.abs(ball.spin.x) > 0.01) {
+      ball.vel.x += ball.spin.x * 0.4;
+      ball.spin.x *= 0.7;
+    }
     collided = true;
   }
   if (ball.pos.y + ball.radius > PLAYFIELD_BOTTOM) {
     ball.pos.y = PLAYFIELD_BOTTOM - ball.radius;
     ball.vel.y = -ball.vel.y * RESTITUTION_WALL;
+    if (Math.abs(ball.spin.x) > 0.01) {
+      ball.vel.x -= ball.spin.x * 0.4;
+      ball.spin.x *= 0.7;
+    }
     collided = true;
   }
 

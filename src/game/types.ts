@@ -47,6 +47,7 @@ export enum FoulType {
 export interface Shot {
   aimAngle: number;
   power: number;
+  spinX: number;
   playerId: number;
   timestamp: number;
   hits: HitRecord[];

@@ -20,6 +20,7 @@ export default function GameCanvas() {
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(performance.now());
   const mouseRef = useRef({ x: 0, y: 0 });
+  const chargeStartMouseRef = useRef({ x: 0, y: 0 });
   const animRef = useRef({ cueShrink: 0 });
 
   const phase = useGameStore((s) => s.phase);
@@ -27,6 +28,7 @@ export default function GameCanvas() {
   const table = useGameStore((s) => s.table);
   const aimAngle = useGameStore((s) => s.aimAngle);
   const power = useGameStore((s) => s.power);
+  const spinX = useGameStore((s) => s.spinX);
   const isCharging = useGameStore((s) => s.isCharging);
   const showAimLine = useGameStore((s) => s.showAimLine);
   const freeBall = useGameStore((s) => s.freeBall);
@@ -37,6 +39,7 @@ export default function GameCanvas() {
   const players = useGameStore((s) => s.players);
 
   const setAimAngle = useGameStore((s) => s.setAimAngle);
+  const setSpinX = useGameStore((s) => s.setSpinX);
   const startCharge = useGameStore((s) => s.startCharge);
   const updateCharge = useGameStore((s) => s.updateCharge);
   const releaseShot = useGameStore((s) => s.releaseShot);
@@ -108,6 +111,15 @@ export default function GameCanvas() {
     const onMove = (e: MouseEvent) => {
       const pt = toLocal(e);
       mouseRef.current = pt;
+
+      if (isCharging) {
+        const startX = chargeStartMouseRef.current.x;
+        const dx = pt.x - startX;
+        const spin = Math.max(-1, Math.min(1, dx / 150));
+        setSpinX(spin);
+        return;
+      }
+
       const cue = balls.find((b) => b.id === 0);
       if (cue && !freeBall) {
         const dx = pt.x - cue.pos.x;
@@ -127,6 +139,7 @@ export default function GameCanvas() {
       if (phase === 'aiming') {
         const curPlayer = players.find((p) => p.id === currentPlayerId);
         if (!curPlayer?.isAI) {
+          chargeStartMouseRef.current = pt;
           startCharge();
         }
       }
@@ -146,7 +159,7 @@ export default function GameCanvas() {
       canvas.removeEventListener('mousedown', onDown);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [balls, phase, freeBall, isCharging, currentPlayerId, players]);
+  }, [balls, phase, freeBall, isCharging, currentPlayerId, players, setSpinX]);
 
   const draw = (ctx: CanvasRenderingContext2D, curBalls: Ball[], t: Table) => {
     ctx.fillStyle = '#0a0f0a';
@@ -168,11 +181,11 @@ export default function GameCanvas() {
       if (!b.pocketed) drawBall(ctx, b);
     }
 
-    if (phase === 'aiming' && !freeBall) {
+    if ((phase === 'aiming' || phase === 'charging') && !freeBall) {
       const cue = curBalls.find((bb) => bb.id === 0);
       const curPlayer = players.find((p) => p.id === currentPlayerId);
       if (cue && !curPlayer?.isAI) {
-        drawCue(ctx, cue, aimAngle, power);
+        drawCue(ctx, cue, aimAngle, power, spinX);
       }
     }
 
@@ -185,7 +198,7 @@ export default function GameCanvas() {
     }
   };
 
-  const drawCue = (ctx: CanvasRenderingContext2D, cue: Ball, angle: number, pwr: number) => {
+  const drawCue = (ctx: CanvasRenderingContext2D, cue: Ball, angle: number, pwr: number, sx: number) => {
     const shrink = animRef.current.cueShrink;
     const dist = BALL_RADIUS * 2 + 18 - shrink * 50;
     const startX = cue.pos.x + Math.cos(angle + Math.PI) * dist;
@@ -244,6 +257,34 @@ export default function GameCanvas() {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
+    }
+
+    if (Math.abs(sx) > 0.01) {
+      const perpX = -Math.sin(angle);
+      const perpY = Math.cos(angle);
+      const indicatorLen = 40 * Math.abs(sx);
+      const indicatorX = startX + perpX * sx * indicatorLen;
+      const indicatorY = startY + perpY * sx * indicatorLen;
+
+      ctx.strokeStyle = sx > 0 ? '#ef4444' : '#3b82f6';
+      ctx.lineWidth = 4 + Math.abs(sx) * 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(indicatorX, indicatorY);
+      ctx.stroke();
+
+      ctx.fillStyle = sx > 0 ? '#ef4444' : '#3b82f6';
+      ctx.beginPath();
+      ctx.arc(indicatorX, indicatorY, 5 + Math.abs(sx) * 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const labelY = startY - 30;
+      ctx.fillText(sx > 0 ? `右塞 ${Math.round(Math.abs(sx) * 100)}%` : `左塞 ${Math.round(Math.abs(sx) * 100)}%`, startX, labelY);
     }
 
     ctx.restore();

@@ -31,6 +31,7 @@ import { saveReplay } from '../utils/storage';
 interface UIState {
   aimAngle: number;
   power: number;
+  spinX: number;
   isCharging: boolean;
   showAimLine: boolean;
   selectedGameMode: GameMode;
@@ -51,6 +52,7 @@ interface GameStore extends GameState, UIState {
   ) => void;
   resetGame: () => void;
   setAimAngle: (angle: number) => void;
+  setSpinX: (spin: number) => void;
   startCharge: () => void;
   updateCharge: (dt: number) => void;
   releaseShot: () => void;
@@ -118,6 +120,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   aimAngle: 0,
   power: 0,
+  spinX: 0,
   isCharging: false,
   showAimLine: true,
   selectedGameMode: '8ball',
@@ -153,6 +156,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       groupsAssigned: false,
       aimAngle: 0,
       power: 0,
+      spinX: 0,
       isCharging: false,
     });
   },
@@ -164,10 +168,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setAimAngle: (angle) => set({ aimAngle: angle }),
 
+  setSpinX: (spin) => set({ spinX: Math.max(-1, Math.min(1, spin)) }),
+
   startCharge: () => {
     const { phase, freeBall } = get();
     if (phase !== 'aiming' || freeBall) return;
-    set({ isCharging: true, power: 0.05, phase: 'charging' });
+    set({ isCharging: true, power: 0.05, spinX: 0, phase: 'charging' });
   },
 
   updateCharge: (dt) => {
@@ -183,15 +189,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const shot: Shot = {
       aimAngle: s.aimAngle,
       power: s.power,
+      spinX: s.spinX,
       playerId: s.currentPlayerId,
       timestamp: Date.now(),
       hits: [],
       pocketedBalls: [],
       foul: FoulTypeEnum.NONE,
     };
-    applyShot(s.balls, s.aimAngle, s.power, MAX_POWER);
+    applyShot(s.balls, s.aimAngle, s.power, MAX_POWER, s.spinX, 0);
     recordReplayShot(shot);
-    set({ isCharging: false, currentShot: shot, phase: 'simulating', power: 0 });
+    set({ isCharging: false, currentShot: shot, phase: 'simulating', power: 0, spinX: 0 });
   },
 
   placeFreeBall: (x, y) => {
